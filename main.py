@@ -17,17 +17,18 @@ class MLPNet(Model):
     def __init__(self, input_dim, output_dim):
         super(MLPNet, self).__init__()
         self.first_ = Dense(output_dim,
-                            activation='elu',
+                            activation='relu',
                             kernel_initializer=tf.keras.initializers.Orthogonal(1.),
                             bias_initializer=tf.keras.initializers.Constant(0.),
                             dtype=tf.float32)
-        self.build(input_shape=(None, input_dim))
 
-    def call(self, x, **kwargs):
+        self.build(input_shape=(None, input_dim)) # build 产生参数
+
+    def call(self, x, **kwargs):  # **kwargs 是什么
         x = self.first_(x)
         return x
 
-class x_or_y_module(tf.Module):
+class x_or_y_module(tf.Module): # tf.module 为状态容器
     def __init__(self, args, initial_samples):
         super().__init__()
         T = args.T
@@ -120,12 +121,13 @@ class ParameterContainer(tf.Module):
         super().__init__()
         self.T = args.T
         self.N = args.N
+        self.rou = args.rou
         self.x = x_or_y_module(args, initial_samples)
         self.z = z_module(args, initial_samples)
         self.y = x_or_y_module(args, initial_samples)
 
     def assign_all(self, new_variables):
-        for new_var, local_var in zip(new_variables, self.trainable_variables):
+        for new_var, local_var in zip(new_variables, self.trainable_variables):   #assign() 函数，用新值替换旧值。
             local_var.assign(new_var)
 
     def assign_x(self, new_xs):
@@ -141,24 +143,32 @@ class ParameterContainer(tf.Module):
             local_z.assign(new_z)
 
     def update_y(self):
-        pass
+        new_y = self.y + self.rou * (self.x - self.z)
+        return new_y
 
     def update_z(self):
-        pass
+        new_z = []
+        return new_z
 
 
 def built_DADP_parser():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--mode', type=str, default='training') # training testing
+    parser.add_argument('--T', type=int, default='10')
+    parser.add_argument('--N', type=int, default='30')
+    parser.add_argument('--rou', type=float, default='1')
+    parser.add_argument('--obs_dim', type=int, default='3')
+    parser.add_argument('--act_dim', type=int, default='1')
 
     return parser.parse_args()
 
 
 def main():
-    args = built_DADP_parser()
+    args = built_DADP_parser()#T,N,rou,obs_dim,act_dim
     ray.init(object_store_memory=5120*1024*1024)
     initial_samples = None
+
     all_parameters = ParameterContainer(initial_samples, args)
     learners = [ray.remote(num_cpus=1)(Learner).remote(initial_samples, args) for _ in range(args.T)]
 
