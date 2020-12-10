@@ -22,13 +22,14 @@ class MLPNet(Model):
                             bias_initializer=tf.keras.initializers.Constant(0.),
                             dtype=tf.float32)
 
-        self.build(input_shape=(None, input_dim)) # build 产生参数
+        self.build(input_shape=(None, input_dim))
 
-    def call(self, x, **kwargs):  # **kwargs 是什么
+    def call(self, x, **kwargs):
         x = self.first_(x)
         return x
 
-class x_or_y_module(tf.Module): # tf.module 为状态容器
+
+class x_or_y_module(tf.Module):
     def __init__(self, args, initial_samples):
         super().__init__()
         T = args.T
@@ -80,17 +81,27 @@ class Learner(object):
         self.N = args.N
         self.rou = args.rou
         self.obs_dim = args.obs_dim
+        self.act_dim = args.act_dim
 
     def update_all_para(self, new_para):
         self.all_parameter.assign_all(new_para)
 
-    def dynamics(self, obs, action):
+    def dynamics(self, obs, action, dis):
         '''
         :param obs, shape(batch_size, obs_dim)
         :param action, shape(batch_size, act_dim)
         :return: next_obs, l
         '''
-        pass
+        sample_time = 0.02
+        tau = 0.1
+        A = [[0, 1, sample_time], [0, 0, 1], [0, 0, -1 / tau]]
+        B = [[0, 0, 1 / tau]]
+        C = tf.constant([[1, 0, 0]])
+        y = tf.matmul(C, obs)
+
+        next_obs = tf.add(tf.matmul(A, obs), tf.matmul(B, action))
+        l = 1 / 2 * tf.square(y - dis)
+        return next_obs, l
 
     def utility_func(self, obs, action):
         '''
@@ -100,21 +111,42 @@ class Learner(object):
         '''
         pass
 
-    def construct_ith_loss(self, i):
+    def construct_ith_loss(self, j):
         loss = 0
-        if i == 0:
-            theta_0 = self.all_parameter.x[0][0]
-            all_x_02 = tf.reshape([self.all_parameter.x[i][self.T] for i in range(1, self.N+1)], shape=(self.N, self.obs_dim))
-            all_y_11 = tf.reshape([self.all_parameter.y[i][1] for i in range(1, self.N+1)], shape=(self.N, self.obs_dim))
-            all_x_11 = tf.reshape([self.all_parameter.x[i][1] for i in range(1, self.N+1)], shape=(self.N, self.obs_dim))
-            all_z_1 = tf.reshape([self.all_parameter.z[i][1] for i in range(1, self.N+1)], shape=(self.N, self.obs_dim))
-            y_theta_0 = self.all_parameter.y[0][0]
-            z_theta = self.all_parameter.z[0]
+        if j == 0:
+            theta_0 = self.all_parameter.x.x[0][0]
+            all_x_02 = tf.reshape([self.all_parameter.x.x[i][self.T] for i in range(1, self.N+1)], shape=(self.N, self.obs_dim))
+            all_y_11 = tf.reshape([self.all_parameter.y.x[i][1] for i in range(1, self.N+1)], shape=(self.N, self.obs_dim))
+            all_x_11 = tf.reshape([self.all_parameter.x.x[i][1] for i in range(1, self.N+1)], shape=(self.N, self.obs_dim))
+            all_z_1 = tf.reshape([self.all_parameter.z.z[i][1] for i in range(1, self.N+1)], shape=(self.N, self.obs_dim))
+            y_theta_0 = self.all_parameter.y.x[0][0]
+            z_theta = self.all_parameter.z.z[0]
             pi_x_02 = theta_0(all_x_02)
-            x_11, ls = self.dynamics(all_x_02, pi_x_02)
+            dis = [1,2,4]
+            x_11, ls = self.dynamics(all_x_02, pi_x_02, dis)
             loss += tf.reduce_mean(ls)
-            loss += tf.reduce_sum(all_y_11*(all_z_1-x_11))
-
+            loss += tf.reduce_sum(all_y_11*(all_z_1 - all_x_11))
+            loss += tf.reduce_sum(y_theta_0*(z_theta - theta_0))
+            print('loss', loss)
+        else:
+            theta = self.all_parameter.x.x[j][0]
+            all_x_j2 = tf.reshape([self.all_parameter.x.x[i][self.T + j] for i in range(1, self.N + 1)],
+                                  shape=(self.N, self.obs_dim))
+            all_y_j_add_1 = tf.reshape([self.all_parameter.y.x[i][j + 1] for i in range(1, self.N + 1)],
+                                  shape=(self.N, self.obs_dim))
+            all_x_j_add_1 = tf.reshape([self.all_parameter.x.x[i][j + 1] for i in range(1, self.N + 1)],
+                                  shape=(self.N, self.obs_dim))
+            all_z_j = tf.reshape([self.all_parameter.z.z[i][j + 1] for i in range(1, self.N + 1)],
+                                 shape=(self.N, self.obs_dim))
+            y_theta_j = self.all_parameter.y.x[0][j]
+            z_theta = self.all_parameter.z.z[0]
+            pi_x_j2 = theta(all_x_j2)
+            dis = [1, 2, 4]
+            x_11, ls = self.dynamics(all_x_j2, pi_x_j2, dis)
+            loss += tf.reduce_mean(ls)
+            loss += tf.reduce_sum(all_y_j_add_1 * (all_z_j - all_x_j_add_1))
+            loss += tf.reduce_sum(y_theta_j * (z_theta - theta))
+            print('loss', loss)
 
 class ParameterContainer(tf.Module):
     def __init__(self, initial_samples, args):
@@ -155,23 +187,30 @@ def built_DADP_parser():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--mode', type=str, default='training') # training testing
-    parser.add_argument('--T', type=int, default='10')
-    parser.add_argument('--N', type=int, default='30')
+    parser.add_argument('--T', type=int, default='2')
+    parser.add_argument('--N', type=int, default='3')
     parser.add_argument('--rou', type=float, default='1')
     parser.add_argument('--obs_dim', type=int, default='3')
     parser.add_argument('--act_dim', type=int, default='1')
+    parser.add_argument('max_iter', type=int, default='100')
 
     return parser.parse_args()
 
 
 def main():
     args = built_DADP_parser()#T,N,rou,obs_dim,act_dim
-    ray.init(object_store_memory=5120*1024*1024)
-    initial_samples = None
+    ray.init()
+    #ray.init(object_store_memory=5120*1024*1024)
+    #initial_samples = None
+    initial_samples = [[1,2,3],[2,3,3],[5,6,7]]
 
     all_parameters = ParameterContainer(initial_samples, args)
-    learners = [ray.remote(num_cpus=1)(Learner).remote(initial_samples, args) for _ in range(args.T)]
-
+    print('all_parameters.x=', all_parameters.x)
+    exit()
+    learners = Learner(initial_samples, args)
+    learners.construct_ith_loss(0)
+    #learners = [ray.remote(num_cpus=1)(Learner).remote(initial_samples, args) for _ in range(args.T)]
+    exit()
     for _ in range(args.max_iter):
         # 1st step
         ray.get([learner.learn.remote() for learner in learners])
