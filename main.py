@@ -98,7 +98,6 @@ class Learner(object):
         B = tf.constant([[0, 0, 1 / tau]])
         C = tf.constant([[1., 0., 0.]])
         #y = tf.matmul(C, obs)
-
         next_obs = tf.add(tf.matmul(A, obs), tf.matmul(B, action))
         #l = 1 / 2 * tf.square(y - dis)
         l = 0
@@ -125,7 +124,7 @@ class Learner(object):
             all_z_1 = tf.reshape([self.all_parameter.z.z[i][1] for i in range(1, self.N + 1)],
                                  shape=(self.N, self.obs_dim))
             y_theta_0 = self.all_parameter.y.x[0][0]
-            z_theta = self.all_parameter.z.z[0][0]
+            z_theta = self.all_parameter.z.z[0]
             pi_x_02 = theta_0(all_x_02)
             dis = tf.constant([[1., 2., 4.]])
             x_11, ls = self.dynamics(all_x_02, pi_x_02, dis)
@@ -144,7 +143,7 @@ class Learner(object):
             all_z_T_1 = tf.reshape([self.all_parameter.z.z[i][self.T - 1] for i in range(1, self.N + 1)],
                                    shape=(self.N, self.obs_dim))
             y_theta_T_1 = self.all_parameter.y.x[0][self.T - 1]
-            z_theta = self.all_parameter.z.z[0][0]
+            z_theta = self.all_parameter.z.z[0]
 
             pi_x_T_1_2 = theta_T_1(all_x_T_1_2)
             dis = tf.constant([[1., 2., 4.]])
@@ -170,7 +169,7 @@ class Learner(object):
             all_z_j = tf.reshape([self.all_parameter.z.z[i][j] for i in range(1, self.N + 1)],
                                  shape=(self.N, self.obs_dim))
             y_theta_j = self.all_parameter.y.x[0][j]
-            z_theta = self.all_parameter.z.z[0][0]
+            z_theta = self.all_parameter.z.z[0]
 
             pi_x_j2 = theta_j(all_x_j2)
             dis = tf.constant([[1., 2., 4.]])
@@ -247,7 +246,7 @@ def main():
     ray.init()
     #ray.init(object_store_memory=5120*1024*1024)
     #initial_samples = None
-    initial_samples = [[1,2,3],[2,3,3],[5,6,7]]
+    initial_samples = [[1., 2., 3.], [2., 3., 3.], [5., 6., 7.]]
 
     all_parameters = ParameterContainer(initial_samples, args)
     #print('all_parameters.x=', all_parameters.x)
