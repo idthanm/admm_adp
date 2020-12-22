@@ -104,7 +104,7 @@ class Learner(object):
         deri = tf.reshape(deri, shape=(self.obs_dim, self.N))
         deri = tf.transpose(deri)
         next_obs = obs + self.delay * deri
-        print('next_obs=', next_obs)
+        #print('next_obs=', next_obs)
         l = 0.5*tf.reduce_mean(tf.square(vs-self.exp_v)) + 0.001*tf.reduce_mean(tf.square(us))
         return next_obs, l
 
@@ -139,7 +139,7 @@ class Learner(object):
                                   shape=(self.N, self.obs_dim))
             #print('all_x_11=', all_x_11)
             #print('loss=', loss)
-            return loss, x_mlp_0.variables, all_x_11, all_x_02
+            return loss
         elif j == self.T - 1:
             x_mlp_T_1 = self.all_parameter.x.params[0][self.T - 1]
             all_x_T_1_2 = tf.reshape([self.all_parameter.x.params[i][2 * self.T - 1] for i in range(1, self.N + 1)],
@@ -168,7 +168,7 @@ class Learner(object):
                                   shape=(self.N, self.obs_dim))
             all_x_T_1_2 = tf.reshape([self.all_parameter.x.params[i][2*self.T - 1] for i in range(1, self.N + 1)],
                                    shape=(self.N, self.obs_dim))
-            return loss, x_mlp_T_1.variables, all_x_T_1, all_x_T_1_2
+            return loss
         else:
             x_mlp_j = self.all_parameter.x.params[0][j]
             all_x_j2 = tf.reshape([self.all_parameter.x.params[i][self.T + j] for i in range(1, self.N + 1)],
@@ -203,7 +203,7 @@ class Learner(object):
                                        shape=(self.N, self.obs_dim))
             all_x_j2 = tf.reshape([self.all_parameter.x.params[i][self.T + j] for i in range(1, self.N + 1)],
                                        shape=(self.N, self.obs_dim))
-            return loss, x_mlp_j.variables, all_x_j_add_1, all_x_j2
+            return loss
 
     def assign_x(self, new_xs):
         for new_x, local_x in zip(new_xs, self.x.trainable_variables):
@@ -220,11 +220,20 @@ class Learner(object):
     def learn(self, j):
         for _ in range(self.iteration_number_x_update):
             with tf.GradientTape() as tape:
-                loss, x_mlp_value, updated_x_j_add_1, updated_x_j2 = self.construct_ith_loss(j)
-            print('loss=', loss)
+                loss = self.construct_ith_loss(j)
+            #print('loss=', loss)
             #exit()
             grad = tape.gradient(loss, self.all_parameter.trainable_variables)
             self.opt.apply_gradients(grads_and_vars=zip(grad, self.all_parameter.trainable_variables))
+
+        x_mlp_value = self.all_parameter.x.params[0][j].trainable_variables
+
+        updated_x_j_add_1 = tf.reshape([self.all_parameter.x.params[i][j + 1] for i in range(1, self.N + 1)],
+                                       shape=(self.N, self.obs_dim))
+
+        updated_x_j2 = tf.reshape([self.all_parameter.x.params[i][self.T + j] for i in range(1, self.N + 1)],
+                                       shape=(self.N, self.obs_dim))
+
         return x_mlp_value, updated_x_j_add_1, updated_x_j2
 
 class ParameterContainer(tf.Module):
@@ -264,6 +273,7 @@ class ParameterContainer(tf.Module):
                 self.y.params[i][j].assign(self.y.params[i][j] + self.rou * (self.x.params[i][j] - self.z.z[i][j - self.T]))
 
     def update_z(self):
+        #s = self.x.params[0][0]
         all_zs = np.array([np.array(self.x.params[0][i].get_weights()) for i in range(0, self.T)])
         mean_z = np.mean(all_zs, axis=0)
         self.z.z[0].set_weights(mean_z)
@@ -299,9 +309,18 @@ def main():
         # 1st step update x
         for time_horizon in range(args.T):
             x_mlp_value, updated_x_j_add_1, updated_x_j2 = learners.learn(time_horizon)
-            all_parameters.x.params[0][time_horizon] = x_mlp_value
+            #print('x_mlp = ', x_mlp_value)
+            #exit()
+            #print('all_parameters.x.params[0][time_horizon].trainable_variables = ', all_parameters.x.params[0][time_horizon].trainable_variables)
+            #exit()
+            for v1, v2 in zip(all_parameters.x.params[0][time_horizon].trainable_variables, x_mlp_value):
+                v1.assign(v2)
+            #all_parameters.x.params[0][time_horizon].trainable_variables = x_mlp_value
+            #print('all_parameters.x.params[0][time_horizon].trainable_variables = ', all_parameters.x.params[0][time_horizon].trainable_variables)
+            #exit()
             if time_horizon == 0:
                 for i in range(1, args.N + 1):
+                    #for v1, v2 in zip(all_parameters.x.params[i][1].trainable_variables, target):
                     all_parameters.x.params[i][1].assign(updated_x_j_add_1[i - 1, :])
             elif time_horizon == args.T - 1:
                 for i in range(1, args.N + 1):
@@ -311,7 +330,7 @@ def main():
                     all_parameters.x.params[i][time_horizon + 1].assign(updated_x_j_add_1[i - 1, :])
                     all_parameters.x.params[i][args.T + 1].assign(updated_x_j2[i - 1, :])
         #print('x=', all_parameters.x.trainable_variables)
-        #exit()
+        exit()
         # 2nd step update z
 
         #all_parameters.assign_x(x)
