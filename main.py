@@ -244,19 +244,19 @@ class Learner(object):
 
         return x_mlp_value, updated_x_j_add_1, updated_x_j2
 
-    def terminal(self, updated_z):
+    def terminal(self, old_z):
         ss = 0
         for j in range(self.T):
-            z_mlp = self.all_parameter.z.z[0]
-            z_mlp_updated = updated_z.z[0]
+            z_mlp = old_z.z[0]
+            z_mlp_updated = self.all_parameter.z.z[0]
             ss += self.rou * tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_updated_z - theta_in_z))
                                            for theta_in_updated_z, theta_in_z in
                                            zip(z_mlp_updated.trainable_variables, z_mlp.trainable_variables)])
 
-            all_z_j_updated = tf.reshape([updated_z.z[i][j] for i in range(1, self.N + 1)],
+            all_z_j_updated = tf.reshape([self.all_parameter.z.z[i][j] for i in range(1, self.N + 1)],
                                  shape=(self.N, self.obs_dim))
 
-            all_z_j = tf.reshape([self.all_parameter.z.z[i][j] for i in range(1, self.N + 1)],
+            all_z_j = tf.reshape([old_z.z[i][j] for i in range(1, self.N + 1)],
                                  shape=(self.N, self.obs_dim))
             ss += self.rou * tf.reduce_sum(tf.square(all_z_j_updated - all_z_j))
         ss = 0.5 * ss
@@ -369,6 +369,7 @@ class Learner(object):
         eps_dual = np.sqrt(9 * self.T) * self.eps_abs + self.eps_rel * AL
         return ss, eps_pri, eps_dual, r
 
+
 class ParameterContainer(tf.Module):
     def __init__(self, initial_samples, args):
         super().__init__()
@@ -417,10 +418,9 @@ class ParameterContainer(tf.Module):
 
 def built_DADP_parser():
     parser = argparse.ArgumentParser()
-
     parser.add_argument('--mode', type=str, default='training') # training testing
     parser.add_argument('--T', type=int, default='3')
-    parser.add_argument('--N', type=int, default='3')
+    parser.add_argument('--N', type=int, default='1')
     parser.add_argument('--rou', type=float, default='1')
     parser.add_argument('--obs_dim', type=int, default='2')
     parser.add_argument('--act_dim', type=int, default='1')
@@ -428,7 +428,7 @@ def built_DADP_parser():
     parser.add_argument('--tau', type=float, default='0.02') # sample_time
     parser.add_argument('--delay', type=float,default='0.35') # 执行机构延迟时间
     parser.add_argument('--exp_v', type=float, default='3.0')
-    parser.add_argument('--iteration_number_x_update', type=int, default='30')
+    parser.add_argument('--iteration_number_x_update', type=int, default='100')
     parser.add_argument('--eps_abs', type=float, default='0.001')
     parser.add_argument('--eps_rel', type=float, default='0.001')
     return parser.parse_args()
@@ -436,7 +436,7 @@ def built_DADP_parser():
 
 def main():
     args = built_DADP_parser() #params_init
-    initial_samples = [[1., 2.], [2., 3.], [3., 4.]]
+    initial_samples = [[3., 0.5]]
     all_parameters = ParameterContainer(initial_samples, args) #main process
     learners = Learner(initial_samples, args)
     # 由子进程中的 x 更新主进程中的 x
@@ -444,18 +444,10 @@ def main():
         # 1st step update x
         for time_horizon in range(args.T):
             x_mlp_value, updated_x_j_add_1, updated_x_j2 = learners.learn(time_horizon)
-            #print('x_mlp = ', x_mlp_value)
-            #exit()
-            #print('all_parameters.x.params[0][time_horizon].trainable_variables = ', all_parameters.x.params[0][time_horizon].trainable_variables)
-            #exit()
             for v1, v2 in zip(all_parameters.x.params[0][time_horizon].trainable_variables, x_mlp_value):
                 v1.assign(v2)
-            #all_parameters.x.params[0][time_horizon].trainable_variables = x_mlp_value
-            #print('all_parameters.x.params[0][time_horizon].trainable_variables = ', all_parameters.x.params[0][time_horizon].trainable_variables)
-            #exit()
             if time_horizon == 0:
                 for i in range(1, args.N + 1):
-                    #for v1, v2 in zip(all_parameters.x.params[i][1].trainable_variables, target):
                     all_parameters.x.params[i][1].assign(updated_x_j_add_1[i - 1, :])
             elif time_horizon == args.T - 1:
                 for i in range(1, args.N + 1):
@@ -463,40 +455,30 @@ def main():
             else:
                 for i in range(1, args.N + 1):
                     all_parameters.x.params[i][time_horizon + 1].assign(updated_x_j_add_1[i - 1, :])
-                    all_parameters.x.params[i][args.T + 1].assign(updated_x_j2[i - 1, :])
-        #print('x=', all_parameters.x.trainable_variables)
-        #print('x=', all_parameters.x.params)
-        #exit()
+                    all_parameters.x.params[i][args.T + time_horizon].assign(updated_x_j2[i - 1, :])
         # 2nd step update z
-
-        #all_parameters.assign_x(x)
         all_parameters.update_z()
-        #print('z=', all_parameters.z.z)
-
         # 3rd
         all_parameters.update_y()
-        #print('y=', all_parameters.y.params)
-        #exit()
 
+        before_update_z = learners.all_parameter.z
+
+        # main process to child process
+        learners.all_parameter.assign_x(all_parameters.x.trainable_variables)
+        learners.all_parameter.assign_y(all_parameters.y.trainable_variables)
+        learners.all_parameter.assign_z(all_parameters.z.trainable_variables)
 
         # terminal judgement
-        ss, eps_pri, eps_dual, r = learners.terminal(all_parameters.z)
+
+        ss, eps_pri, eps_dual, r = learners.terminal(before_update_z)
         print('ss=', ss)
         print('eps_pri=', eps_pri)
         print('eps_dual=', eps_dual)
         print('r=', r)
         if r <= eps_pri and ss <= eps_dual:
+            print('success')
             break
-        #exit()
-        # main process to child process
 
-        learners.all_parameter.assign_x(all_parameters.x.trainable_variables)
-
-        learners.all_parameter.assign_y(all_parameters.y.trainable_variables)
-        #print('before_z', learners.all_parameter.z.trainable_variables)
-        learners.all_parameter.assign_z(all_parameters.z.trainable_variables)
-        #print('after_z', learners.all_parameter.z.trainable_variables)
-        #exit()
 
 if __name__ == '__main__':
     main()
