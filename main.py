@@ -247,13 +247,8 @@ class Learner(object):
     def terminal(self, updated_z):
         ss = 0
         for j in range(self.T):
-
             z_mlp = self.all_parameter.z.z[0]
             z_mlp_updated = updated_z.z[0]
-            #print('z_mlp=', z_mlp.trainable_weights)
-            #print('z_mlp_updated=', z_mlp_updated.trainable_weights)
-
-            #exit()
             ss += self.rou * tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_updated_z - theta_in_z))
                                            for theta_in_updated_z, theta_in_z in
                                            zip(z_mlp_updated.trainable_variables, z_mlp.trainable_variables)])
@@ -263,25 +258,113 @@ class Learner(object):
 
             all_z_j = tf.reshape([self.all_parameter.z.z[i][j] for i in range(1, self.N + 1)],
                                  shape=(self.N, self.obs_dim))
-
             ss += self.rou * tf.reduce_sum(tf.square(all_z_j_updated - all_z_j))
-            #print('ss=', ss)
-            #exit()
         ss = 0.5 * ss
         AX = 0
         BZ = 0
         r = 0
         for j in range(self.T):
-            AX += tf.square()
-            BZ += tf.square()
-            r += tf.square()
-        r = 0.5 * r
-        AX = 0.5 * AX
-        BZ = 0.5 * BZ
+            if j == 0:
+                x_mlp_0 = self.all_parameter.x.params[0][0]
+                all_z_1 = tf.reshape([self.all_parameter.z.z[i][1] for i in range(1, self.N + 1)],
+                                     shape=(self.N, self.obs_dim))
+                all_x_11 = tf.reshape([self.all_parameter.x.params[i][1] for i in range(1, self.N + 1)],
+                                     shape=(self.N, self.obs_dim))
+                z_mlp = self.all_parameter.z.z[0]
+                AX += tf.reduce_sum(tf.square(all_x_11))
+                BZ += tf.reduce_sum(tf.square(all_z_1))
+                r += tf.reduce_sum(tf.square(all_x_11 - all_z_1))
+                AX += tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_x))
+                                                      for theta_in_x in
+                                                      zip(x_mlp_0.trainable_weights)])
+                BZ += tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_z))
+                                                      for theta_in_z in
+                                                      zip(z_mlp.trainable_weights)])
+                r += tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_z - theta_in_x))
+                                                      for theta_in_z, theta_in_x in
+                                                      zip(z_mlp.trainable_weights, x_mlp_0.trainable_weights)])
+            elif j == self.T - 1:
+                x_mlp_T_1 = self.all_parameter.x.params[0][self.T - 1]
+                all_x_T_1_2 = tf.reshape([self.all_parameter.x.params[i][2 * self.T - 1] for i in range(1, self.N + 1)],
+                                         shape=(self.N, self.obs_dim))
+                all_z_T_1 = tf.reshape([self.all_parameter.z.z[i][self.T - 1] for i in range(1, self.N + 1)],
+                                       shape=(self.N, self.obs_dim))
+                z_mlp = self.all_parameter.z.z[0]
+
+                AX += tf.reduce_sum(tf.square(all_x_T_1_2))
+                BZ += tf.reduce_sum(tf.square(all_z_T_1))
+                r += tf.reduce_sum(tf.square(all_z_T_1 - all_x_T_1_2))
+                AX += tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_x))
+                                     for theta_in_x in
+                                     zip(x_mlp_T_1.trainable_weights)])
+                BZ += tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_z))
+                                     for theta_in_z in
+                                     zip(z_mlp.trainable_weights)])
+                r += tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_z - theta_in_x))
+                                    for theta_in_z, theta_in_x in
+                                    zip(z_mlp.trainable_weights, x_mlp_T_1.trainable_weights)])
+            else:
+                x_mlp_j = self.all_parameter.x.params[0][j]
+                all_x_j2 = tf.reshape([self.all_parameter.x.params[i][self.T + j] for i in range(1, self.N + 1)],
+                                      shape=(self.N, self.obs_dim))
+                all_z_j_add_1 = tf.reshape([self.all_parameter.z.z[i][j + 1] for i in range(1, self.N + 1)],
+                                           shape=(self.N, self.obs_dim))
+                all_z_j = tf.reshape([self.all_parameter.z.z[i][j] for i in range(1, self.N + 1)],
+                                     shape=(self.N, self.obs_dim))
+                z_mlp = self.all_parameter.z.z[0]
+                all_x_j_add_1 = tf.reshape([self.all_parameter.x.params[i][j + 1] for i in range(1, self.N + 1)],
+                                      shape=(self.N, self.obs_dim))
+
+                AX += tf.reduce_sum(tf.square(all_x_j_add_1))
+                BZ += tf.reduce_sum(tf.square(all_z_j_add_1))
+                r += tf.reduce_sum(tf.square(all_z_j_add_1 - all_x_j_add_1))
+                AX += tf.reduce_sum(tf.square(all_x_j2))
+                BZ += tf.reduce_sum(tf.square(all_z_j))
+                r += tf.reduce_sum(tf.square(all_z_j - all_x_j2))
+                AX += tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_x))
+                                     for theta_in_x in
+                                     zip(x_mlp_j.trainable_weights)])
+                BZ += tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_z))
+                                     for theta_in_z in
+                                     zip(z_mlp.trainable_weights)])
+                r += tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_z - theta_in_x))
+                                    for theta_in_z, theta_in_x in
+                                    zip(z_mlp.trainable_weights, x_mlp_j.trainable_weights)])
+
+        r **= 0.5
+        AX **= 0.5
+        BZ **= 0.5
         AL = 0
-        for k in range(1, self.T):
-            AL += tf.square()
-        AL = 0.5 * AL
+        for k in range(0, self.T):
+            if j == 0:
+                y_mlp_0 = self.all_parameter.y.params[0][0]
+                all_y_11 = tf.reshape([self.all_parameter.y.params[i][1] for i in range(1, self.N + 1)],
+                                     shape=(self.N, self.obs_dim))
+                AL += tf.reduce_sum(tf.square(all_y_11))
+                AL += tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_y))
+                                                      for theta_in_y in
+                                                      zip(y_mlp_0.trainable_weights)])
+            elif j == self.T - 1:
+                y_mlp_T_1 = self.all_parameter.x.params[0][self.T - 1]
+                all_y_T_1_2 = tf.reshape([self.all_parameter.x.params[i][2 * self.T - 1] for i in range(1, self.N + 1)],
+                                         shape=(self.N, self.obs_dim))
+                AL += tf.reduce_sum(tf.square(all_y_T_1_2))
+                AL += tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_y))
+                                     for theta_in_y in
+                                     zip(y_mlp_T_1.trainable_weights)])
+            else:
+                y_mlp_j = self.all_parameter.x.params[0][j]
+                all_y_j2 = tf.reshape([self.all_parameter.x.params[i][self.T + j] for i in range(1, self.N + 1)],
+                                      shape=(self.N, self.obs_dim))
+                all_y_j_add_1 = tf.reshape([self.all_parameter.x.params[i][j + 1] for i in range(1, self.N + 1)],
+                                      shape=(self.N, self.obs_dim))
+
+                AL += tf.reduce_sum(tf.square(all_y_j_add_1))
+                AL += tf.reduce_sum(tf.square(all_y_j2))
+                AL += tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_y))
+                                     for theta_in_y in
+                                     zip(y_mlp_j.trainable_weights)])
+        AL **= 0.5
         eps_pri = np.sqrt(9 * self.T) * self.eps_abs + self.eps_rel * max(AX, BZ)
         eps_dual = np.sqrt(9 * self.T) * self.eps_abs + self.eps_rel * AL
         return ss, eps_pri, eps_dual, r
@@ -351,7 +434,6 @@ def built_DADP_parser():
     return parser.parse_args()
 
 
-
 def main():
     args = built_DADP_parser() #params_init
     initial_samples = [[1., 2.], [2., 3.], [3., 4.]]
@@ -399,10 +481,13 @@ def main():
 
         # terminal judgement
         ss, eps_pri, eps_dual, r = learners.terminal(all_parameters.z)
-
+        print('ss=', ss)
+        print('eps_pri=', eps_pri)
+        print('eps_dual=', eps_dual)
+        print('r=', r)
         if r <= eps_pri and ss <= eps_dual:
             break
-
+        #exit()
         # main process to child process
 
         learners.all_parameter.assign_x(all_parameters.x.trainable_variables)
