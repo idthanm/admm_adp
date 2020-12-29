@@ -88,6 +88,8 @@ class Learner(object):
         self.act_dim = args.act_dim
         self.delay = args.delay
         self.iteration_number_x_update = args.iteration_number_x_update
+        self.eps_abs = args.eps_abs
+        self.eps_rel = args.eps_rel
 
     def update_all_para(self, new_para):
         self.all_parameter.assign_all(new_para)
@@ -133,10 +135,12 @@ class Learner(object):
                                    zip(z_mlp.trainable_weights, x_mlp_0.trainable_weights)])
             for i in range(1, self.N + 1):
                 self.all_parameter.x.params[i][1].assign(x_11[i - 1, :])
+            '''
             all_x_11 = tf.reshape([self.all_parameter.x.params[i][1] for i in range(1, self.N + 1)],
                                   shape=(self.N, self.obs_dim))
             all_x_02 = tf.reshape([self.all_parameter.x.params[i][self.T] for i in range(1, self.N + 1)],
                                   shape=(self.N, self.obs_dim))
+            '''
             #print('all_x_11=', all_x_11)
             #print('loss=', loss)
             return loss
@@ -164,10 +168,12 @@ class Learner(object):
             for i in range(1, self.N + 1):
                 self.all_parameter.x.params[i][2*self.T - 1].assign(all_x_T_1_2[i - 1, :])
 
+            '''
             all_x_T_1 = tf.reshape([self.all_parameter.x.params[i][self.T-1] for i in range(1, self.N + 1)],
                                   shape=(self.N, self.obs_dim))
             all_x_T_1_2 = tf.reshape([self.all_parameter.x.params[i][2*self.T - 1] for i in range(1, self.N + 1)],
                                    shape=(self.N, self.obs_dim))
+            '''
             return loss
         else:
             x_mlp_j = self.all_parameter.x.params[0][j]
@@ -199,10 +205,12 @@ class Learner(object):
                                                   zip(z_mlp.trainable_weights, x_mlp_j.trainable_weights)])
             for i in range(1, self.N + 1):
                 self.all_parameter.x.params[i][1].assign(x_j_add_1[i - 1, :])
+            '''
             all_x_j_add_1 = tf.reshape([self.all_parameter.x.params[i][j + 1] for i in range(1, self.N + 1)],
                                        shape=(self.N, self.obs_dim))
             all_x_j2 = tf.reshape([self.all_parameter.x.params[i][self.T + j] for i in range(1, self.N + 1)],
                                        shape=(self.N, self.obs_dim))
+            '''
             return loss
 
     def assign_x(self, new_xs):
@@ -235,6 +243,48 @@ class Learner(object):
                                        shape=(self.N, self.obs_dim))
 
         return x_mlp_value, updated_x_j_add_1, updated_x_j2
+
+    def terminal(self, updated_z):
+        ss = 0
+        for j in range(self.T):
+
+            z_mlp = self.all_parameter.z.z[0]
+            z_mlp_updated = updated_z.z[0]
+            #print('z_mlp=', z_mlp.trainable_weights)
+            #print('z_mlp_updated=', z_mlp_updated.trainable_weights)
+
+            #exit()
+            ss += self.rou * tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_updated_z - theta_in_z))
+                                           for theta_in_updated_z, theta_in_z in
+                                           zip(z_mlp_updated.trainable_variables, z_mlp.trainable_variables)])
+
+            all_z_j_updated = tf.reshape([updated_z.z[i][j] for i in range(1, self.N + 1)],
+                                 shape=(self.N, self.obs_dim))
+
+            all_z_j = tf.reshape([self.all_parameter.z.z[i][j] for i in range(1, self.N + 1)],
+                                 shape=(self.N, self.obs_dim))
+
+            ss += self.rou * tf.reduce_sum(tf.square(all_z_j_updated - all_z_j))
+            #print('ss=', ss)
+            #exit()
+        ss = 0.5 * ss
+        AX = 0
+        BZ = 0
+        r = 0
+        for j in range(self.T):
+            AX += tf.square()
+            BZ += tf.square()
+            r += tf.square()
+        r = 0.5 * r
+        AX = 0.5 * AX
+        BZ = 0.5 * BZ
+        AL = 0
+        for k in range(1, self.T):
+            AL += tf.square()
+        AL = 0.5 * AL
+        eps_pri = np.sqrt(9 * self.T) * self.eps_abs + self.eps_rel * max(AX, BZ)
+        eps_dual = np.sqrt(9 * self.T) * self.eps_abs + self.eps_rel * AL
+        return ss, eps_pri, eps_dual, r
 
 class ParameterContainer(tf.Module):
     def __init__(self, initial_samples, args):
@@ -296,13 +346,16 @@ def built_DADP_parser():
     parser.add_argument('--delay', type=float,default='0.35') # 执行机构延迟时间
     parser.add_argument('--exp_v', type=float, default='3.0')
     parser.add_argument('--iteration_number_x_update', type=int, default='30')
+    parser.add_argument('--eps_abs', type=float, default='0.001')
+    parser.add_argument('--eps_rel', type=float, default='0.001')
     return parser.parse_args()
+
 
 
 def main():
     args = built_DADP_parser() #params_init
     initial_samples = [[1., 2.], [2., 3.], [3., 4.]]
-    all_parameters = ParameterContainer(initial_samples, args)
+    all_parameters = ParameterContainer(initial_samples, args) #main process
     learners = Learner(initial_samples, args)
     # 由子进程中的 x 更新主进程中的 x
     for _ in range(args.max_iter):
@@ -330,34 +383,35 @@ def main():
                     all_parameters.x.params[i][time_horizon + 1].assign(updated_x_j_add_1[i - 1, :])
                     all_parameters.x.params[i][args.T + 1].assign(updated_x_j2[i - 1, :])
         #print('x=', all_parameters.x.trainable_variables)
-        exit()
+        #print('x=', all_parameters.x.params)
+        #exit()
         # 2nd step update z
 
         #all_parameters.assign_x(x)
         all_parameters.update_z()
+        #print('z=', all_parameters.z.z)
 
         # 3rd
         all_parameters.update_y()
-        #convergence condition unfinished
-        convergence = 0
-        if convergence == 1:
+        #print('y=', all_parameters.y.params)
+        #exit()
+
+
+        # terminal judgement
+        ss, eps_pri, eps_dual, r = learners.terminal(all_parameters.z)
+
+        if r <= eps_pri and ss <= eps_dual:
             break
-        else:
-            pass
+
+        # main process to child process
 
         learners.all_parameter.assign_x(all_parameters.x.trainable_variables)
 
         learners.all_parameter.assign_y(all_parameters.y.trainable_variables)
-
+        #print('before_z', learners.all_parameter.z.trainable_variables)
         learners.all_parameter.assign_z(all_parameters.z.trainable_variables)
-
-        # deal with this iteration
-        # terminal judgement
-        #weights = ray.put(all_parameters.trainable_variables)
-        #weights = all_parameters.trainable_variables
-        #for learner in learners:
-        # learner.update_all_para.remote(weights)
-
+        #print('after_z', learners.all_parameter.z.trainable_variables)
+        #exit()
 
 if __name__ == '__main__':
     main()
