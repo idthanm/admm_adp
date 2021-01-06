@@ -12,7 +12,7 @@ import tensorflow as tf
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense
 import numpy as np
-
+import datetime
 
 class MLPNet(Model):
     def __init__(self, input_dim, output_dim):
@@ -41,9 +41,9 @@ class x_or_y_module(tf.Module):
         self.params.append([MLPNet(obs_dim, act_dim) for _ in range(T)])
         for i in range(N):
             the_first_time_step = initial_samples[i]
-            i_th_sample_1 = [the_first_time_step] + [tf.Variable(initial_value=tf.ones(shape=(obs_dim,))) for _ in
+            i_th_sample_1 = [the_first_time_step] + [tf.Variable(initial_value=tf.zeros(shape=(obs_dim,))) for _ in
                                                      range(T - 1)]
-            i_th_sample_2 = [the_first_time_step] + [tf.Variable(initial_value=tf.ones(shape=(obs_dim,))) for _ in
+            i_th_sample_2 = [the_first_time_step] + [tf.Variable(initial_value=tf.zeros(shape=(obs_dim,))) for _ in
                                                      range(T - 1)]
             i_th_sample = i_th_sample_1 + i_th_sample_2
             self.params.append(i_th_sample)
@@ -65,8 +65,11 @@ class z_module(tf.Module):
         self.z.append(MLPNet(obs_dim, act_dim))
         for i in range(N):
             the_first_time_step = initial_samples[i]
-            for_sample_i = [the_first_time_step] + [tf.Variable(initial_value=tf.ones(shape=(obs_dim,))) for _ in
+            #print('the_first_time_step = ', the_first_time_step)
+            for_sample_i = [the_first_time_step] + [tf.Variable(initial_value=tf.zeros(shape=(obs_dim,))) for _ in
                                                     range(T - 1)]
+            #print('for_sample_i = ', for_sample_i)
+            #exit()
             self.z.append(for_sample_i)
 
         # self.z: [z_{theta},
@@ -78,7 +81,7 @@ class z_module(tf.Module):
 class Learner(object):
     def __init__(self, initial_samples, args):
         self.all_parameter = ParameterContainer(initial_samples, args)
-        self.opt = tf.keras.optimizers.Adam(lr=3e-4)
+        self.opt = tf.keras.optimizers.Adam(args.lr)
         self.T = args.T
         self.N = args.N
         self.rou = args.rou
@@ -95,22 +98,26 @@ class Learner(object):
         self.all_parameter.assign_all(new_para)
 
     def dynamics(self, obs, action):
-        '''
-        :param obs, shape(batch_size, obs_dim)
-        :param action, shape(batch_size, act_dim)
-        :return: next_obs, l
-        '''
-        vs, a_xs = obs[:, 0], obs[:, 1]
+        vs = obs[:, 0]
         us = action[:, 0]
-        deri = [a_xs, 1. / (self.delay*(us-a_xs))]
+        #('vs = ', vs)
+        #print('us = ', us)
+
+        deri = [us]
         deri = tf.reshape(deri, shape=(self.obs_dim, self.N))
         deri = tf.transpose(deri)
-        next_obs = obs + self.delay * deri
+        print('deri = ', deri)
+        next_obs = obs + self.tau * deri
+        #print('next_obs = ', next_obs)
+        #exit()
         #print('next_obs=', next_obs)
-        l = 0.5*tf.reduce_mean(tf.square(vs-self.exp_v)) + 0.001*tf.reduce_mean(tf.square(us))
+        l = 0.5*tf.reduce_mean(tf.square(next_obs - self.exp_v)) #+ 0.5*tf.reduce_mean(tf.square(us))
+        print('0.5*tf.reduce_mean(tf.square(next_obs - self.exp_v)) = ', 0.5*tf.reduce_mean(tf.square(next_obs - self.exp_v)))
+        #print('0.005*tf.reduce_mean(tf.square(us)) = ', 0.5*tf.reduce_mean(tf.square(us)))
+
         return next_obs, l
 
-    def construct_ith_loss(self, j):
+    def construct_ith_loss(self, j, summary_writer, idx):
         loss = 0
         if j == 0:
             x_mlp_0 = self.all_parameter.x.params[0][0]
@@ -124,25 +131,36 @@ class Learner(object):
             z_mlp = self.all_parameter.z.z[0]
             pi_x_02 = x_mlp_0(all_x_02)
             x_11, ls = self.dynamics(all_x_02, pi_x_02)
+
+            wight = np.array(np.array(x_mlp_0.get_weights()))
+
+            with summary_writer.as_default():
+                tf.summary.scalar('weight = ', wight[0][0], idx, None)
+                tf.summary.scalar('bias = ', wight[1][0], idx, None)
+                tf.summary.scalar('pi_x_02', pi_x_02.numpy()[0][0], idx, None)
+                #tf.summary.scalar('all_x_02', all_x_02.numpy()[0][0], idx, None)
+                tf.summary.scalar('x_11', x_11.numpy()[0][0], idx, None)
+                tf.summary.scalar('ls', ls, idx, None)
             loss += tf.reduce_mean(ls)
-            loss += tf.reduce_sum(all_y_11 * (all_z_1 - x_11))
+
+            loss += tf.reduce_sum(tf.stop_gradient(all_y_11) * (tf.stop_gradient(all_z_1) - x_11))
+
             loss += tf.reduce_sum([tf.reduce_sum(tf.stop_gradient(theta_in_y) * (tf.stop_gradient(theta_in_z) - theta_in_x))
                                    for theta_in_y, theta_in_z, theta_in_x in
                                    zip(y_mlp_0.trainable_weights, z_mlp.trainable_weights, x_mlp_0.trainable_weights)])
-            loss += self.rou / 2 * tf.reduce_sum(tf.square(all_z_1 - x_11))
-            loss += self.rou / 2 * tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_z-theta_in_x))
+            loss += self.rou / 2 * tf.reduce_sum(tf.square(tf.stop_gradient(all_z_1) - x_11))
+
+            loss += self.rou / 2 * tf.reduce_sum([tf.reduce_sum(tf.square(tf.stop_gradient(theta_in_z)-theta_in_x))
                                    for theta_in_z, theta_in_x in
                                    zip(z_mlp.trainable_weights, x_mlp_0.trainable_weights)])
+            with summary_writer.as_default():
+                tf.summary.scalar('y(z-x)', tf.reduce_sum(tf.stop_gradient(all_y_11) * (tf.stop_gradient(all_z_1) - x_11)), idx, None)
+                tf.summary.scalar('y(z-x)_theta', tf.reduce_sum([tf.reduce_sum(tf.stop_gradient(theta_in_y) * (tf.stop_gradient(theta_in_z) - theta_in_x))for theta_in_y, theta_in_z, theta_in_x in zip(y_mlp_0.trainable_weights, z_mlp.trainable_weights, x_mlp_0.trainable_weights)]), idx, None)
+                tf.summary.scalar('(z-x)^2', self.rou / 2 * tf.reduce_sum(tf.square(tf.stop_gradient(all_z_1) - x_11)), idx, None)
+                tf.summary.scalar('(z-x)^2_theta', self.rou / 2 * tf.reduce_sum([tf.reduce_sum(tf.square(tf.stop_gradient(theta_in_z) - theta_in_x)) for theta_in_z, theta_in_x in zip(z_mlp.trainable_weights, x_mlp_0.trainable_weights)]), idx, None)
+
             for i in range(1, self.N + 1):
                 self.all_parameter.x.params[i][1].assign(x_11[i - 1, :])
-            '''
-            all_x_11 = tf.reshape([self.all_parameter.x.params[i][1] for i in range(1, self.N + 1)],
-                                  shape=(self.N, self.obs_dim))
-            all_x_02 = tf.reshape([self.all_parameter.x.params[i][self.T] for i in range(1, self.N + 1)],
-                                  shape=(self.N, self.obs_dim))
-            '''
-            #print('all_x_11=', all_x_11)
-            #print('loss=', loss)
             return loss
         elif j == self.T - 1:
             x_mlp_T_1 = self.all_parameter.x.params[0][self.T - 1]
@@ -157,23 +175,16 @@ class Learner(object):
             pi_x_T_1_2 = x_mlp_T_1(all_x_T_1_2)
             x_T_1, ls = self.dynamics(all_x_T_1_2, pi_x_T_1_2)
             loss += tf.reduce_mean(ls)
-            loss += tf.reduce_sum(all_y_T_1_2 * (all_z_T_1 - all_x_T_1_2))
+            loss += tf.reduce_sum(tf.stop_gradient(all_y_T_1_2) * (tf.stop_gradient(all_z_T_1) - all_x_T_1_2))
             loss += tf.reduce_sum([tf.reduce_sum(tf.stop_gradient(theta_in_y) * (tf.stop_gradient(theta_in_z) - theta_in_x))
                                    for theta_in_y, theta_in_z, theta_in_x in
                                    zip(y_mlp_T_1.trainable_weights, z_mlp.trainable_weights, x_mlp_T_1.trainable_weights)])
-            loss += self.rou / 2 * tf.reduce_sum(tf.square(all_z_T_1 - all_x_T_1_2))
-            loss += self.rou / 2 * tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_z-theta_in_x))
+            loss += self.rou / 2 * tf.reduce_sum(tf.square(tf.stop_gradient(all_z_T_1) - all_x_T_1_2))
+            loss += self.rou / 2 * tf.reduce_sum([tf.reduce_sum(tf.square(tf.stop_gradient(theta_in_z) - theta_in_x))
                                    for theta_in_z, theta_in_x in
                                    zip(z_mlp.trainable_weights, x_mlp_T_1.trainable_weights)])
             for i in range(1, self.N + 1):
                 self.all_parameter.x.params[i][2*self.T - 1].assign(all_x_T_1_2[i - 1, :])
-
-            '''
-            all_x_T_1 = tf.reshape([self.all_parameter.x.params[i][self.T-1] for i in range(1, self.N + 1)],
-                                  shape=(self.N, self.obs_dim))
-            all_x_T_1_2 = tf.reshape([self.all_parameter.x.params[i][2*self.T - 1] for i in range(1, self.N + 1)],
-                                   shape=(self.N, self.obs_dim))
-            '''
             return loss
         else:
             x_mlp_j = self.all_parameter.x.params[0][j]
@@ -192,25 +203,19 @@ class Learner(object):
             pi_x_j2 = x_mlp_j(all_x_j2)
             x_j_add_1, ls = self.dynamics(all_x_j2, pi_x_j2,)
             loss += tf.reduce_mean(ls)
-            loss += tf.reduce_sum(all_y_j_add_1 * (all_z_j_add_1 - x_j_add_1))
-            loss += tf.reduce_sum(all_y_j2 * (all_z_j - all_x_j2))
+            loss += tf.reduce_sum(tf.stop_gradient(all_y_j_add_1) * (tf.stop_gradient(all_z_j_add_1) - x_j_add_1))
+            loss += tf.reduce_sum(tf.stop_gradient(all_y_j2) * (tf.stop_gradient(all_z_j) - all_x_j2))
             loss += tf.reduce_sum(
                 [tf.reduce_sum(tf.stop_gradient(theta_in_y) * (tf.stop_gradient(theta_in_z) - theta_in_x))
                  for theta_in_y, theta_in_z, theta_in_x in
                  zip(y_mlp_j.trainable_weights, z_mlp.trainable_weights, x_mlp_j.trainable_weights)])
-            loss += self.rou / 2 * tf.reduce_sum(tf.square(all_z_j_add_1 - x_j_add_1))
-            loss += self.rou / 2 * tf.reduce_sum(tf.square(all_z_j - all_x_j2))
-            loss += self.rou / 2 * tf.reduce_sum([tf.reduce_sum(tf.square(theta_in_z - theta_in_x))
+            loss += self.rou / 2 * tf.reduce_sum(tf.square(tf.stop_gradient(all_z_j_add_1) - x_j_add_1))
+            loss += self.rou / 2 * tf.reduce_sum(tf.square(tf.stop_gradient(all_z_j) - all_x_j2))
+            loss += self.rou / 2 * tf.reduce_sum([tf.reduce_sum(tf.square(tf.stop_gradient(theta_in_z) - theta_in_x))
                                                   for theta_in_z, theta_in_x in
                                                   zip(z_mlp.trainable_weights, x_mlp_j.trainable_weights)])
             for i in range(1, self.N + 1):
                 self.all_parameter.x.params[i][1].assign(x_j_add_1[i - 1, :])
-            '''
-            all_x_j_add_1 = tf.reshape([self.all_parameter.x.params[i][j + 1] for i in range(1, self.N + 1)],
-                                       shape=(self.N, self.obs_dim))
-            all_x_j2 = tf.reshape([self.all_parameter.x.params[i][self.T + j] for i in range(1, self.N + 1)],
-                                       shape=(self.N, self.obs_dim))
-            '''
             return loss
 
     def assign_x(self, new_xs):
@@ -225,10 +230,15 @@ class Learner(object):
         for new_z, local_z in zip(new_zs, self.z.trainable_variables):
             local_z.assign(new_z)
 
-    def learn(self, j):
-        for _ in range(self.iteration_number_x_update):
+    def learn(self, j, summary_writer):
+        for idx in range(self.iteration_number_x_update):
             with tf.GradientTape() as tape:
-                loss = self.construct_ith_loss(j)
+                loss = self.construct_ith_loss(j, summary_writer, idx)
+
+            if (idx % 10 == 0):
+                with summary_writer.as_default():
+                    tf.summary.scalar('loss', loss, idx, None)
+
             #print('loss=', loss)
             #exit()
             grad = tape.gradient(loss, self.all_parameter.trainable_variables)
@@ -407,10 +417,11 @@ class ParameterContainer(tf.Module):
                 self.y.params[i][j].assign(self.y.params[i][j] + self.rou * (self.x.params[i][j] - self.z.z[i][j - self.T]))
 
     def update_z(self):
-        #s = self.x.params[0][0]
         all_zs = np.array([np.array(self.x.params[0][i].get_weights()) for i in range(0, self.T)])
         mean_z = np.mean(all_zs, axis=0)
-        self.z.z[0].set_weights(mean_z)
+        weights = [mean_z[0].reshape(1, 1), mean_z[1].reshape(1,)]
+        self.z.z[0].set_weights(weights)
+        #exit()
         for i in range(1, self.N + 1):
             for j in range(1, self.T):
                 self.z.z[i][j].assign(0.5*(self.x.params[i][j] + self.x.params[i][j + self.T]))
@@ -419,31 +430,38 @@ class ParameterContainer(tf.Module):
 def built_DADP_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', type=str, default='training') # training testing
-    parser.add_argument('--T', type=int, default='3')
-    parser.add_argument('--N', type=int, default='1')
-    parser.add_argument('--rou', type=float, default='1')
-    parser.add_argument('--obs_dim', type=int, default='2')
-    parser.add_argument('--act_dim', type=int, default='1')
-    parser.add_argument('--max_iter', type=int, default='100')
-    parser.add_argument('--tau', type=float, default='0.02') # sample_time
-    parser.add_argument('--delay', type=float,default='0.35') # 执行机构延迟时间
-    parser.add_argument('--exp_v', type=float, default='3.0')
-    parser.add_argument('--iteration_number_x_update', type=int, default='100')
-    parser.add_argument('--eps_abs', type=float, default='0.001')
-    parser.add_argument('--eps_rel', type=float, default='0.001')
+    parser.add_argument('--T', type=int, default=15)
+    parser.add_argument('--N', type=int, default=1)
+    parser.add_argument('--rou', type=float, default=1)
+    parser.add_argument('--obs_dim', type=int, default=1)
+    parser.add_argument('--act_dim', type=int, default=1)
+    parser.add_argument('--max_iter', type=int, default=30)
+    parser.add_argument('--tau', type=float, default=0.1) # sample_time
+    parser.add_argument('--delay', type=float,default=0.35) # 执行机构延迟时间
+    parser.add_argument('--exp_v', type=float, default=1.0)
+    parser.add_argument('--iteration_number_x_update', type=int, default=1000)
+    parser.add_argument('--eps_abs', type=float, default=0.001)
+    parser.add_argument('--eps_rel', type=float, default=0.001)
+    parser.add_argument('--lr', type=float, default=3e-3)
     return parser.parse_args()
 
 
 def main():
     args = built_DADP_parser() #params_init
-    initial_samples = [[3., 0.5]]
+    initial_samples = [[0.]]
     all_parameters = ParameterContainer(initial_samples, args) #main process
     learners = Learner(initial_samples, args)
+    log_dir = "/home/chb/jupyter/logs/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    summary_writer = tf.summary.create_file_writer(log_dir)
     # 由子进程中的 x 更新主进程中的 x
-    for _ in range(args.max_iter):
+    for idx in range(args.max_iter):
         # 1st step update x
         for time_horizon in range(args.T):
-            x_mlp_value, updated_x_j_add_1, updated_x_j2 = learners.learn(time_horizon)
+            x_mlp_value, updated_x_j_add_1, updated_x_j2 = learners.learn(time_horizon, summary_writer)
+            print('time_horizon=', time_horizon)
+            print('updated_x_j_add_1=', updated_x_j_add_1)
+            print('updated_x_j2=', updated_x_j2)
+            exit()
             for v1, v2 in zip(all_parameters.x.params[0][time_horizon].trainable_variables, x_mlp_value):
                 v1.assign(v2)
             if time_horizon == 0:
@@ -457,6 +475,7 @@ def main():
                     all_parameters.x.params[i][time_horizon + 1].assign(updated_x_j_add_1[i - 1, :])
                     all_parameters.x.params[i][args.T + time_horizon].assign(updated_x_j2[i - 1, :])
         # 2nd step update z
+        #exit()
         all_parameters.update_z()
         # 3rd
         all_parameters.update_y()
@@ -471,10 +490,17 @@ def main():
         # terminal judgement
 
         ss, eps_pri, eps_dual, r = learners.terminal(before_update_z)
+        '''
         print('ss=', ss)
         print('eps_pri=', eps_pri)
         print('eps_dual=', eps_dual)
         print('r=', r)
+        with summary_writer.as_default():
+            tf.summary.scalar('ss = ', ss, idx, None)
+            tf.summary.scalar('eps_pri = ', eps_pri, idx, None)
+            tf.summary.scalar('eps_dual = ', eps_dual, idx, None)
+            tf.summary.scalar('r = ', r, idx, None)
+        '''
         if r <= eps_pri and ss <= eps_dual:
             print('success')
             break

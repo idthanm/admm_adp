@@ -447,3 +447,26 @@ for p in range(5):
 #print('score=', score)
 '''
 
+'''
+class Solution(object):
+  def largeGroupPositions(self, s:str):
+    res = []
+    cur_res = []
+    n = len(s)
+    i = 0
+    while (i < n):
+      left = i
+      right = i + 1
+      while (right < n and s[left] == s[right]):
+        right += 1
+
+      if ((right - left) >= 3):
+        res.add(left)
+        res.add(right - 1)
+        cur_res.add(res)
+      i = right
+    return cur_res
+
+s = "abbxxxxzzy"
+largeGroupPositions(s)
+'''
